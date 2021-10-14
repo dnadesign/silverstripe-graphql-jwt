@@ -2,33 +2,36 @@
 
 namespace Firesphere\GraphQLJWT\Authentication;
 
-use BadMethodCallException;
-use DateTimeImmutable;
 use Exception;
-use Firesphere\GraphQLJWT\Extensions\MemberExtension;
-use Firesphere\GraphQLJWT\Helpers\MemberTokenGenerator;
-use Firesphere\GraphQLJWT\Model\JWTRecord;
-use Firesphere\GraphQLJWT\Types\TokenStatusEnum;
-use Lcobucci\JWT\Builder;
+use LogicException;
+use DateTimeImmutable;
+use Lcobucci\JWT\Token;
 use Lcobucci\JWT\Parser;
 use Lcobucci\JWT\Signer;
-use Lcobucci\JWT\Signer\Hmac;
+use OutOfBoundsException;
+use BadMethodCallException;
 use Lcobucci\JWT\Signer\Key;
 use Lcobucci\JWT\Signer\Rsa;
-use Lcobucci\JWT\Token;
+use Lcobucci\JWT\Signer\Hmac;
+use Lcobucci\JWT\Configuration;
+use Lcobucci\JWT\Token\Builder;
 use Lcobucci\JWT\ValidationData;
-use LogicException;
-use OutOfBoundsException;
+use SilverStripe\Security\Member;
 use SilverStripe\Control\Director;
-use SilverStripe\Control\HTTPRequest;
-use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
-use SilverStripe\Core\Injector\Injectable;
-use SilverStripe\ORM\FieldType\DBDatetime;
-use SilverStripe\ORM\ValidationException;
+use Lcobucci\JWT\Signer\Rsa\Sha256;
+use Lcobucci\JWT\Signer\Key\InMemory;
+use SilverStripe\Control\HTTPRequest;
 use SilverStripe\ORM\ValidationResult;
 use SilverStripe\Security\Authenticator;
-use SilverStripe\Security\Member;
+use SilverStripe\ORM\ValidationException;
+use Firesphere\GraphQLJWT\Model\JWTRecord;
+use SilverStripe\Core\Config\Configurable;
+use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\ORM\FieldType\DBDatetime;
+use Firesphere\GraphQLJWT\Types\TokenStatusEnum;
+use Firesphere\GraphQLJWT\Extensions\MemberExtension;
+use Firesphere\GraphQLJWT\Helpers\MemberTokenGenerator;
 use SilverStripe\Security\MemberAuthenticator\MemberAuthenticator;
 
 class JWTAuthenticator extends MemberAuthenticator
@@ -168,11 +171,11 @@ class JWTAuthenticator extends MemberAuthenticator
 
         // String key
         if (empty($path)) {
-            return new Key($path);
+            return InMemory::plainText($key);
         }
 
         // Build key from path
-        return new Key('file://' . $path, $password);
+        return InMemory::file('file://' . $path, $password);
     }
 
     /**
@@ -240,33 +243,29 @@ class JWTAuthenticator extends MemberAuthenticator
             $record->write();
         }
 
+        $config = Configuration::forSymmetricSigner(new Sha256(), InMemory::plainText('testing'));
         // Create builder for this record
-        $builder = new Builder();
-        $now = DBDatetime::now()->getTimestamp();
+        $builder = $config->builder();
+        $now = $now = new DateTimeImmutable();
         $token = $builder
             // Configures the issuer (iss claim)
-            ->setIssuer($request->getHeader('Origin'))
+            ->issuedBy($request->getHeader('Origin'))
             // Configures the audience (aud claim)
-            ->setAudience(Director::absoluteBaseURL())
+            ->permittedFor(Director::absoluteBaseURL())
             // Configures the id (jti claim), replicating as a header item
-            ->setId($uniqueID, true)
+            ->identifiedBy($uniqueID, true)
             // Configures the time that the token was issue (iat claim)
-            ->setIssuedAt($now)
+            ->issuedAt($now)
             // Configures the time that the token can be used (nbf claim)
-            ->setNotBefore($now + $config->get('nbf_time'))
+            ->canOnlyBeUsedAfter($now->modify('+1 minute'))
             // Configures the expiration time of the token (nbf claim)
-            ->setExpiration($now + $config->get('nbf_expiration'))
-            // Set renew expiration
-            ->set('rexp', $now + $config->get('nbf_refresh_expiration'))
+            ->expiresAt($now->modify('+1 hour'))
             // Configures a new claim, called "rid"
-            ->set('rid', $record->ID)
+            ->withClaim('rid', $record->ID)
             // Set the subject, which is the member
-            ->setSubject($member->getJWTData())
-            // Sign the key with the Signer's key
-            ->sign($this->getSigner(), $this->getPrivateKey());
+            ->relatedTo($member->getJWTData());
 
-        // Return the token
-        return $token->getToken();
+        return $token->getToken($this->getSigner(), $this->getPrivateKey());
     }
 
     /**
