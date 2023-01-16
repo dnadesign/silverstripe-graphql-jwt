@@ -1,5 +1,5 @@
 {
-    "name": "gazzayeatman/graphql-jwt",
+    "name": "dnadesign/graphql-jwt",
     "description": "JWT Authentication for GraphQL",
     "type": "silverstripe-vendormodule",
     "license": "bsd-3-clause",
